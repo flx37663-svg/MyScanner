@@ -25,12 +25,22 @@ def load_config():
                 data = json.load(f)
                 api.conf.headers, api.conf.target_url = data.get("headers", {}), data.get("target_url", "")
                 api.conf.threads = data.get("threads", 5)
-                api.conf.scan_settings = data.get("scan_settings", {})
-                api.conf.report_settings = data.get("report_settings", {})
+                api.conf.scan_settings, api.conf.report_settings = data.get("scan_settings", {}), data.get(
+                    "report_settings", {})
                 wb = data.get("webhook", {})
                 webhook_inst = WebhookManager(wb.get("enabled"), wb.get("sendkey"))
         except Exception as e:
             print(f"[!] Config Error: {e}")
+
+
+def flatten_result(res_dict):
+    if not res_dict: return "N/A"
+    inner = res_dict.get("Result", res_dict)
+    for key in ["VerifyInfo", "ShellInfo", "DBInfo", "Stdout"]:
+        if key in inner:
+            v = inner[key];
+            return json.dumps(v, indent=2) if isinstance(v, dict) else str(v)
+    return str(inner)
 
 
 def worker(poc_path, target_url):
@@ -49,88 +59,55 @@ def worker(poc_path, target_url):
         if poc_class:
             poc_obj = poc_class(target_url)
             poc_obj.options = {'cookie': api.conf.headers.get('Cookie', '')}
-            res = poc_obj._verify()
-            is_ok = bool(res.result) if (res and hasattr(res, 'result')) else bool(res)
-            if is_ok:
+            res_obj = poc_obj._verify()
+            if res_obj and getattr(res_obj, 'result', None):
                 print(f"\033[92m[+] SUCCESS | {poc_file} | {target_url}\033[0m")
-                if webhook_inst: webhook_inst.send_vuln_alert(poc_obj, target_url, poc_file)
+                evidence = flatten_result(res_obj.result)
+                if webhook_inst: webhook_inst.send_vuln_alert(poc_obj, target_url, poc_file, evidence)
                 with report_lock:
                     reporter.add_result(poc_file, target_url, api.thread_data.last_request,
-                                        api.thread_data.last_response, getattr(poc_obj, 'payload', "N/A"))
+                                        api.thread_data.last_response, evidence)
     except:
         pass
 
 
-# --- core/engine.py 修改后的 start_engine 函数 ---
-
-def start_engine(args):  # 接收 args 对象
+def start_engine(args):
     global reporter
     import pocsuite3.api as api
-    load_config()  # 先加载配置文件作为底色
-
-    # --- 核心：命令行参数覆盖 (CLI Overrides Config) ---
+    load_config()
     target = args.url or api.conf.target_url
-    threads = args.threads if (args.threads and args.threads > 0) else api.conf.threads
+    threads = args.threads or api.conf.threads
+    s, rs = api.conf.scan_settings, api.conf.report_settings
+    if not target: return
 
-    if not target:
-        print("\033[91m[!] 错误: 未指定目标 URL。使用 -u 参数或修改 config.json\033[0m")
-        return
+    # 1. 发现
+    urls = [target] if args.single or s.get("target_mode") == "single" else Crawler(target,
+                                                                                    args.depth if args.depth is not None else s.get(
+                                                                                        "max_depth", 3),
+                                                                                    s.get("max_pages", 100)).start()
 
-    # 提取扫描设置
-    s = api.conf.scan_settings
-    target_mode = "single" if args.single else s.get("target_mode", "crawler")
-    max_depth = args.depth if args.depth is not None else s.get("max_depth", 3)
-    max_pages = args.pages if args.pages is not None else s.get("max_pages", 100)
-
-    # 提取 PoC 设置
-    poc_mode = s.get("poc_mode", "all")
-    poc_name = args.poc or s.get("poc_name", "")
-    poc_group = args.group or s.get("poc_group", "")
-
-    if args.poc: poc_mode = "single"
-    if args.group: poc_mode = "group"
-
-    # 如果指定了 --no-push，强制关闭 Webhook
-    if args.no_push:
-        api.conf.webhook_enabled = False
-
-    # 1. 发现逻辑
-    if target_mode == "single":
-        urls = [target]
-    else:
-        urls = Crawler(target, max_depth=max_depth, max_pages=max_pages).start()
-
-    # 2. PoC 加载逻辑
-    poc_dir = os.path.join(ROOT_PATH, 'pocs')
+    # 2. 收集 PoC
+    poc_dir = os.path.join(ROOT_PATH, 'pocs');
     pocs = []
-
-    if poc_mode == "single":
-        p_path = os.path.join(poc_dir, poc_name)
-        pocs = [p_path] if os.path.exists(p_path) else []
-    elif poc_mode == "group":
-        g_dir = os.path.join(poc_dir, poc_group)
-        pocs = [os.path.join(g_dir, f) for f in os.listdir(g_dir) if f.endswith('.py')] if os.path.isdir(g_dir) else []
+    if args.poc:
+        for r, d, fs in os.walk(poc_dir):
+            if args.poc in fs: pocs.append(os.path.join(r, args.poc))
     else:
         for r, d, fs in os.walk(poc_dir):
             for f in fs:
                 if f.endswith('.py') and not f.startswith('__'): pocs.append(os.path.join(r, f))
 
-    if not pocs:
-        print("\033[91m[!] 错误: 未找到可用的 PoC 脚本。\033[0m")
-        return
-
+    if not pocs: return
     reporter = Reporter(target, len(pocs))
-    print(f"[*] MyScanner Engine Active | {len(urls)} URLs x {len(pocs)} PoCs | Threads: {threads}")
-
+    print(f"[*] MyScanner Engine Active | {len(urls)} URLs x {len(pocs)} PoCs")
     with ThreadPoolExecutor(max_workers=threads) as executor:
         for u in urls:
             for p in pocs: executor.submit(worker, p, u)
 
-    # 3. 报告保存逻辑
-    rep_s = api.conf.report_settings
-    out_dir = rep_s.get("output_dir", "./reports")
+    # 3. 核心修复：报告保存目录逻辑
+    out_dir = args.dir or rs.get("output_dir", "./reports")
     if not os.path.exists(out_dir): os.makedirs(out_dir)
 
-    # 优先使用 -o 命令行参数指定的文件名
-    fname = args.output or rep_s.get("filename", "") or f"scanner_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
-    reporter.generate(os.path.join(out_dir, fname))
+    fname = args.output or rs.get("filename", "") or f"scanner_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+    full_path = os.path.join(out_dir, fname)
+    reporter.generate(full_path)
