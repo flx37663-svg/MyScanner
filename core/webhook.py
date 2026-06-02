@@ -20,7 +20,7 @@ class WebhookManager:
             f"- **插件**: `{poc_file}`\n- **类型**: **{vul_type}**\n\n"
             "**[ 扫描目标 ]**\n"
             f"- **地址**: {target_url}\n- **时间**: {now_time}\n\n"
-            "**[ 攻击证据 ]**\n"
+            "**[ Payload ]**\n"
             f"```text\n{evidence}\n```\n---\n*Powered by MyScanner Engine*"
         )
         try: raw_req.post(self.api_url, data={"title": title, "desp": description}, timeout=10)
