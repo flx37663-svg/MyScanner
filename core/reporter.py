@@ -30,9 +30,16 @@ HTML_TEMPLATE = """
 
 class Reporter:
     def __init__(self, target, total_pocs):
-        self.target, self.results = target, []
+        self.target = target
+        self.results = []
     def add_result(self, n, u, q, r, p):
-        self.results.append({"name": n, "url": u, "req": html.escape(q), "res": html.escape(r), "payload": html.escape(p), "time": datetime.now().strftime("%H:%M:%S")})
+        self.results.append({
+            "name": n, "url": u,
+            "req": html.escape(str(q)),
+            "res": html.escape(str(r)),
+            "payload": html.escape(str(p)),
+            "time": datetime.now().strftime("%H:%M:%S")
+        })
     def generate(self, filename):
         rows = ""
         for i, item in enumerate(self.results):
@@ -43,9 +50,9 @@ class Reporter:
                     <div class="badge bg-danger">{item['name']}</div>
                 </div>
                 <div id="detail-{i}" class="vuln-detail">
-                    <b>Payload:</b><div class="payload-box">{item['payload']}</div>
+                    <b>Evidence:</b><div class="payload-box">{item['payload']}</div>
                     <b>HTTP Request:</b><pre>{item['req']}</pre>
-                    <b>HTTP Response:</b><pre>{item['res']}</pre>
+                    <b>HTTP Response (Preview):</b><pre>{item['res']}</pre>
                 </div>
             </div>"""
         content = HTML_TEMPLATE.replace("{{ target }}", self.target).replace("{{ vuln_count }}", str(len(self.results))).replace("{{ gen_time }}", datetime.now().strftime("%Y-%m-%d %H:%M:%S")).replace("{{ rows_html }}", rows)

@@ -5,12 +5,25 @@ from types import ModuleType
 
 
 def _inject_internal_modules():
-    # 注入安全变量作为保底
-    setattr(builtins, 'cmd_result', "")
+    setattr(builtins, 'cmd_result', "");
     setattr(builtins, 'result', {})
 
-    targets = ['pocsuite3.lib.core.enums', 'pocsuite3.lib.utils',
-               'pocsuite3.lib.core.data', 'pocsuite3.lib.core.interpreter_option']
+    class Exploits:
+        WEBAPP = 'Web'; NETWORK = 'Net'
+
+    class Category:
+        EXPLOITS = Exploits
+
+    class VulType:
+        CODE_EXECUTION = 'RCE';
+        SQL_INJECTION = 'SQLI'
+        CROSS_SITE_SCRIPTING = 'XSS';
+        REMOTE_COMMAND_EXECUTION = 'RCE'
+        REMOTE_CODE_EXECUTION = 'RCE';
+        ARBITRARY_FILE_READ = 'FileRead'
+
+    targets = ['pocsuite3.lib.core.enums', 'pocsuite3.lib.utils', 'pocsuite3.lib.core.data',
+               'pocsuite3.lib.core.interpreter_option']
 
     class BaseOption:
         def __init__(self, default, *args, **kwargs): self.default = default
@@ -19,10 +32,11 @@ def _inject_internal_modules():
         if name not in sys.modules:
             m = ModuleType(name)
             m.OptString = m.OptDict = m.OptInt = m.OptBool = m.OptFloat = BaseOption
-            m.VUL_TYPE = type('VUL_TYPE', (), {'CODE_EXECUTION': 'RCE', 'SQL_INJECTION': 'SQLI'})
-            m.POC_CATEGORY = type('POC_CATEGORY', (), {'EXPLOITS': type('EX', (), {'WEBAPP': 'WEB'})})
+            m.VUL_TYPE = VulType;
+            m.POC_CATEGORY = Category
             m.random_str = lambda l=10, *args, **kwargs: "".join(random.sample(string.ascii_letters, l))
             sys.modules[name] = m
+    return Category, VulType
 
 
 class Conf:
@@ -35,7 +49,7 @@ class Conf:
         self.report_settings = {}
 
 
-conf = Conf()
+conf = Conf();
 thread_data = threading.local()
 
 
@@ -45,11 +59,11 @@ def init_thread_data(): thread_data.last_request = "N/A"; thread_data.last_respo
 class RequestsProxy:
     def request(self, method, url, **kwargs):
         kwargs.setdefault('timeout', conf.timeout);
-        kwargs.setdefault('headers', conf.headers);
+        kwargs.setdefault('headers', conf.headers)
         kwargs['verify'] = False
         try:
             res = req.request(method, url, **kwargs)
-            # 记录流量
+            # 全流量捕获逻辑
             q = res.request
             h = "\n".join([f"{k}: {v}" for k, v in q.headers.items()])
             b = q.body.decode('utf-8', 'ignore') if isinstance(q.body, bytes) else str(q.body or "")
@@ -57,7 +71,7 @@ class RequestsProxy:
             thread_data.last_response = f"HTTP/1.1 {res.status_code}\n\n{res.text[:1000]}"
             return res
         except:
-            return type('MockRes', (), {'text': '', 'content': b'', 'status_code': 0, 'headers': {}})
+            return type('MockRes', (), {'text': '', 'status_code': 0, 'headers': {}, 'url': url})
 
     def get(self, url, **kwargs):
         return self.request("GET", url, **kwargs)
@@ -70,20 +84,13 @@ requests = RequestsProxy()
 
 
 class Output:
-    def __init__(self, poc=None):
-        self.result = {}
-        self.status = False  # 核心：显式状态位
+    def __init__(self, poc=None): self.result = {}; self.status = False
 
     def success(self, r=None):
-        # 只有传入了非空字典或真值，才标记为扫描成功
-        if r and (not isinstance(r, dict) or len(r) > 0):
-            self.result = r
-            self.status = True
+        if r: self.result = r; self.status = True
         return self
 
-    def fail(self):
-        self.status = False
-        return self
+    def fail(self, msg=""): self.status = False; return self
 
 
 class POCBase:
@@ -96,22 +103,20 @@ class POCBase:
 
     def parse_output(self, result):
         o = Output(self)
-        # 只有 result 包含具体信息（如 VerifyInfo）时才通过
-        if result:
-            return o.success(result)
-        return o.fail()
+        return o.success(result) if result else o.fail()
 
     def _verify(self):
         try:
-            if hasattr(self, '_check'): return self._check()
-            if hasattr(self, 'verify'): return self.verify()
+            for func in ['_check', 'verify', '_verify']:
+                if hasattr(self, func) and func != '_verify':
+                    res = getattr(self, func)()
+                    if isinstance(res, Output): return res
+                    return self.parse_output(res)
         except:
-            return Output(self).fail()
+            pass
         return Output(self).fail()
 
 
+POC_CATEGORY, VUL_TYPE = _inject_internal_modules()
 register_poc = lambda p: setattr(sys.modules[__name__], 'CURRENT_POC_CLASS', p)
 logger = type('Logger', (), {'info': print, 'success': lambda x: print(f"[+] {x}"), 'error': print, 'warn': print})
-VUL_TYPE = type('VUL_TYPE', (), {'CODE_EXECUTION': 'RCE', 'SQL_INJECTION': 'SQLI'})
-POC_CATEGORY = type('POC_CATEGORY', (), {'EXPLOITS': type('EX', (), {'WEBAPP': 'WEB'})})
-_inject_internal_modules()

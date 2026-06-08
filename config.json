@@ -1,0 +1,25 @@
+{
+  "target_url": "",
+  "threads": 5,
+  "timeout": 10,
+  "headers": {
+    "Cookie": "",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Scanner/1.0"
+  },
+  "scan_settings": {
+    "target_mode": "crawler",
+    "poc_mode": "group",
+    "poc_name": "sqli.py",
+    "poc_group": "dvwa_poc",
+    "max_depth": 3,
+    "max_pages": 100
+  },
+  "report_settings": {
+    "output_dir": "./reports",
+    "filename": "DVWA.html"
+  },
+  "webhook": {
+    "enabled": false,
+    "sendkey": ""
+  }
+}

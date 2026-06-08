@@ -6,6 +6,7 @@ from pocsuite3.lib.core.enums import VUL_TYPE
 from pocsuite3.lib.core.interpreter_option import OptString
 from pocsuite3.lib.utils import random_str, get_middle_text
 
+cmd_result=""
 
 class DemoPOC(POCBase):
     vulID = ''  # ssvid
